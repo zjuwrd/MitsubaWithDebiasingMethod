@@ -61,9 +61,10 @@ if sys.platform == 'win32':
                 if '.dll' in plugin.__str__():
                         installTargets += env.Install(os.path.join(distDir, 'plugins'), plugin)
 
-        compilerType = 'vc141'
+        boost_version = '1_77'
+        compilerType = 'vc142' # 'vc141'
         archType = 'x64' if 'WIN64' in env['CXXFLAGS'] else 'i386'
-        dllprefix = '#dependencies/lib'
+        dllprefix = '#dependencies/bin' # '#dependencies/lib'
 
         if hasCollada:
                 install(distDir, ['converter/mtsimport.exe'])
@@ -79,20 +80,40 @@ if sys.platform == 'win32':
                 includeDir = entry[0][len(basePath)+1:]
                 installTargets += env.Install(os.path.join(sdkDir, includeDir),
                         [ ('#' + os.path.join(includeDir, fname)) for fname in entry[2] ])
+
+        boostLibs = ['filesystem', 'chrono', 'thread']
         for ver in hasPython:
+                boostLibs.append('python' + ver.replace(".", ""))
                 installAs(os.path.join(distDir, 'python/'+ver+'/mitsuba.pyd'), 'libpython/mitsuba_python' + ver + '.dll')
-        install(distDir, ['Iex.dll', 'Half.dll','IlmThread.dll', 'Imath.dll','IlmImf.dll','zlib1.dll',
-                'libpng16.dll', 'jpeg.dll', 'xerces-c_3_1.dll', 'glew32mx.dll', 'libfftw3-3.dll'],
+
+        install(distDir, ['Iex-3_1.dll','IlmThread-3_1.dll', 'Imath-3_2.dll','OpenEXR-3_1.dll','zlib.dll',
+                'libpng16.dll', 'jpeg62.dll', 'xerces-c_4_0.dll', 'glew32.dll', 'libfftw3-3.dll'],
                 prefix=dllprefix)
-        for boostlib in ['python27', 'python35', 'python36', 'system', 'filesystem', 'chrono', 'thread']:
-                install(distDir, ['boost_%s-%s-mt-1_64.dll' % (boostlib, compilerType)], dllprefix)
+        for boostlib in boostLibs:
+                if 'WIN64' in env['CXXFLAGS']:
+                        install(distDir, ['boost_%s-%s-mt-x64-%s.dll' % (boostlib, compilerType, boost_version)], dllprefix)
+                else:
+                        install(distDir, ['boost_%s-%s-mt-%s.dll' % (boostlib, compilerType, boost_version)], dllprefix) 
+
+        # install(distDir, ['Iex.dll', 'Half.dll','IlmThread.dll', 'Imath.dll','IlmImf.dll','zlib1.dll',
+        #         'libpng16.dll', 'jpeg.dll', 'xerces-c_3_1.dll', 'glew32mx.dll', 'libfftw3-3.dll'],
+        #         prefix=dllprefix)
+        # for boostlib in ['python27', 'python35', 'python36', 'system', 'filesystem', 'chrono', 'thread']:
+        #         install(distDir, ['boost_%s-%s-mt-1_64.dll' % (boostlib, compilerType)], dllprefix)
 
         installTargets += env.Install(distDir, '#data/windows/README.txt')
 
         if hasQt:
                 install(distDir, ['mtsgui/mtsgui.exe'])
+                # install(distDir, ['Qt5Core.dll', 'Qt5Gui.dll', 'Qt5Widgets.dll', 'Qt5Xml.dll',
+                #         'Qt5Network.dll', 'Qt5OpenGL.dll', 'Qt5XmlPatterns.dll'], prefix = env['QT5_LIBPATH'])
                 install(distDir, ['Qt5Core.dll', 'Qt5Gui.dll', 'Qt5Widgets.dll', 'Qt5Xml.dll',
-                        'Qt5Network.dll', 'Qt5OpenGL.dll', 'Qt5XmlPatterns.dll'], prefix = env['QT5_LIBPATH'])
+                        'Qt5Network.dll', 'Qt5OpenGL.dll', 'Qt5XmlPatterns.dll'], prefix = env['QT5_BINPATH'])
+                QT5_PLUGIN_PATH = os.path.join(os.path.join('$QTDIR', 'plugins'), 'platforms')
+                DIST_PLUGIN_PATH = os.path.join(os.path.join(distDir, 'plugins'), 'platforms')
+                install(DIST_PLUGIN_PATH, ['qdirect2d.dll', 'qdirect2dd.dll',
+                        'qminimal.dll', 'qminimald.dll', 'qoffscreen.dll', 'qoffscreend.dll',
+                        'qwindows.dll', 'qwindowsd.dll'], prefix=QT5_PLUGIN_PATH)
 elif sys.platform == 'darwin':
         for i in plugins:
                 plugin = env.Install(os.path.join(distDir, 'plugins'), i)

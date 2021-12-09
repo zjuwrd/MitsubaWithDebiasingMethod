@@ -44,7 +44,8 @@ import SCons.Scanner
 import SCons.Tool
 import SCons.Util
 
-class ToolQtWarning(SCons.Warnings.Warning):
+# class ToolQtWarning(SCons.Warnings.Warning):
+class ToolQtWarning():
         pass
 
 class GeneratedMocFileNotIncluded(ToolQtWarning):
@@ -53,7 +54,7 @@ class GeneratedMocFileNotIncluded(ToolQtWarning):
 class QtdirNotFound(ToolQtWarning):
         pass
 
-SCons.Warnings.enableWarningClass(ToolQtWarning)
+# SCons.Warnings.enableWarningClass(ToolQtWarning)
 
 qrcinclude_re = re.compile(r'<file>([^<]*)</file>', re.M)
 

@@ -31,7 +31,7 @@ if needsBuildDependencies and not os.path.exists(GetBuildPath('#dependencies')):
         print('at http://www.mitsuba-renderer.org/docs.html for details on how to get them.\n')
         Exit(1)
 
-python_versions = ["2.6", "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "3.5", "3.6", "3.7"]
+python_versions = ["2.6", "2.7", "3.0", "3.1", "3.2", "3.3", "3.4", "3.5", "3.6", "3.7", "3.8", "3.9"]
 
 # Parse configuration options
 vars = Variables(configFile)
@@ -188,7 +188,7 @@ if not conf.CheckCHeader(['stdio.h', 'jpeglib.h']):
 else:
         env.Append(CPPDEFINES = [['MTS_HAS_LIBJPEG', 1]] )
 
-if not conf.CheckCXXHeader('ImfRgba.h'):
+if not conf.CheckCXXHeader('openexr.h'): # conf.CheckCXXHeader('ImfRgba.h'):
         print('OpenEXR is missing (install libopenexr-dev for OpenEXR I/O support)')
 else:
         env.Append(CPPDEFINES = [['MTS_HAS_OPENEXR', 1]] )
