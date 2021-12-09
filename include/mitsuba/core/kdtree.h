@@ -22,6 +22,7 @@
 
 #include <mitsuba/core/aabb.h>
 #include <mitsuba/core/timer.h>
+#include <functional>
 
 MTS_NAMESPACE_BEGIN
 
@@ -273,7 +274,7 @@ public:
 
     /// Comparison functor for nearest-neighbor search queries
     struct SearchResultComparator : public
-        std::binary_function<SearchResult, SearchResult, bool> {
+        std::function<bool(SearchResult, SearchResult)> {
     public:
         inline bool operator()(const SearchResult &a, const SearchResult &b) const {
             return a.distSquared < b.distSquared;
@@ -811,7 +812,7 @@ public:
         }
     }
 protected:
-    struct CoordinateOrdering : public std::binary_function<IndexType, IndexType, bool> {
+    struct CoordinateOrdering : public std::function<bool(IndexType, IndexType)> {
     public:
         inline CoordinateOrdering(const std::vector<NodeType> &nodes, int axis)
             : m_nodes(nodes), m_axis(axis) { }
@@ -823,7 +824,7 @@ protected:
         int m_axis;
     };
 
-    struct LessThanOrEqual : public std::unary_function<IndexType, bool> {
+    struct LessThanOrEqual : public std::function<bool(IndexType)> {
     public:
         inline LessThanOrEqual(const std::vector<NodeType> &nodes, int axis, Scalar value)
             : m_nodes(nodes), m_axis(axis), m_value(value) { }

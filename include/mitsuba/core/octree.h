@@ -24,6 +24,7 @@
 #include <mitsuba/core/atomic.h>
 #include <mitsuba/core/timer.h>
 #include <mitsuba/core/aabb.h>
+#include <functional>
 
 MTS_NAMESPACE_BEGIN
 
@@ -149,7 +150,7 @@ public:
     }
 
 protected:
-    struct LabelOrdering : public std::binary_function<uint32_t, uint32_t, bool> {
+    struct LabelOrdering : public std::function<bool(uint32_t, uint32_t)> {
         LabelOrdering(const std::vector<Item> &items) : m_items(items) { }
 
         inline bool operator()(uint32_t a, uint32_t b) const {

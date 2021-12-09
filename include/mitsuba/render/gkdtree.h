@@ -24,6 +24,7 @@
 #include <mitsuba/core/lock.h>
 #include <boost/static_assert.hpp>
 #include <stack>
+#include <functional>
 
 #if defined(__LINUX__)
 #include <malloc.h>
@@ -1328,7 +1329,7 @@ protected:
     BOOST_STATIC_ASSERT(sizeof(EdgeEvent) == 12);
 
     /// Edge event comparison functor
-    struct EdgeEventOrdering : public std::binary_function<EdgeEvent, EdgeEvent, bool> {
+    struct EdgeEventOrdering : public std::function<bool(EdgeEvent, EdgeEvent)> {
         inline bool operator()(const EdgeEvent &a, const EdgeEvent &b) const {
             if (a.axis != b.axis)
                 return a.axis < b.axis;
