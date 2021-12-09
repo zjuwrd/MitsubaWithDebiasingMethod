@@ -31,7 +31,9 @@ dist
 \.gdb_history
 
 # Dependencies
-dependencies
+dependencies/*
+!dependencies/CMakeLists.txt
+!dependencies/version
 
 # OSX binaries and byproducts
 Mitsuba.app
@@ -48,3 +50,10 @@ mitsuba.*.log
 .settings
 .cproject
 .project
+
+# Visual Studio Code related
+.vscode/
+
+# We build cmake projects here
+cbuild/
+data/windows/wmain_stub.obj
