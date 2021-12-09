@@ -29,7 +29,7 @@
 #include <mitsuba/core/fstream.h>
 #include <boost/algorithm/string.hpp>
 
-XERCES_CPP_NAMESPACE_USE
+using namespace XERCES_CPP_NAMESPACE; // XERCES_CPP_NAMESPACE_USE
 
 SceneLoader::SceneLoader(FileResolver *resolver, const fs::path &filename,
         const fs::path &destFile, const std::map<std::string, std::string, SimpleStringOrdering> &parameters)
@@ -99,7 +99,7 @@ void SceneLoader::run() {
             parser->setDoSchema(true);
             parser->setValidationSchemaFullChecking(true);
             parser->setValidationScheme(SAXParser::Val_Always);
-            parser->setExternalNoNamespaceSchemaLocation(schemaPath.c_str());
+            parser->setExternalNoNamespaceSchemaLocation(schemaPath.string().c_str()/*schemaPath.c_str()*/);
 
             /* Set the SAX handler */
             parser->setDoNamespaces(true);
@@ -118,7 +118,7 @@ void SceneLoader::run() {
                     filename.string().c_str());
 
             try {
-                parser->parse(filename.c_str());
+                parser->parse(filename.string().c_str()/*filename.c_str()*/);
             } catch (const VersionException &ex) {
                 m_versionError = true;
                 m_version = ex.getVersion();

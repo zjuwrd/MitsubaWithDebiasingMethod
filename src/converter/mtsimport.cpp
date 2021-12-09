@@ -162,7 +162,7 @@ int mts_main(int argc, char **argv) {
     int retval;
 
     /* Initialize Xerces-C */
-    XERCES_CPP_NAMESPACE_USE
+    using namespace XERCES_CPP_NAMESPACE; // XERCES_CPP_NAMESPACE_USE
     try {
         XMLPlatformUtils::Initialize();
     } catch (const XMLException &toCatch) {

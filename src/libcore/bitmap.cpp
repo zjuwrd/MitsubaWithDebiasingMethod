@@ -97,11 +97,11 @@ public:
         return m_stream->getPos() == m_size;
     }
 
-    Imf::Int64 tellg() {
+    uint64_t tellg() { // Imf::Int64 tellg() {
         return m_stream->getPos()-m_offset;
     }
 
-    void seekg(Imf::Int64 pos) {
+    void seekg(uint64_t pos) { // void seekg(Imf::Int64 pos) {
         m_stream->seek((size_t) pos + m_offset);
     }
 
@@ -121,11 +121,11 @@ public:
         m_stream->write(c, n);
     }
 
-    Imf::Int64 tellp() {
+    uint64_t tellp() { // Imf::Int64 tellp() {
         return m_stream->getPos();
     }
 
-    void seekp(Imf::Int64 pos) {
+    void seekp(uint64_t pos) { // void seekp(Imf::Int64 pos) {
         m_stream->seek((size_t) pos);
     }
 

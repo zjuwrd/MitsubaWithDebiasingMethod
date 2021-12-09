@@ -2,7 +2,9 @@
    here so that Mitsuba can optionally be compiled without OpenEXR support. */
 
 #if defined(MTS_HAS_OPENEXR)
+#define IMATH_HALF_NO_LOOKUP_TABLE
 #include <half.h>
+#include <ImfFrameBuffer.h>
 #else
 ///////////////////////////////////////////////////////////////////////////
 //
