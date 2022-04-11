@@ -8,10 +8,14 @@ set(ENV{http_proxy}  "http://127.0.0.1:10809") # for http
 set(ENV{https_proxy} "http://127.0.0.1:10809") # for https
 
 if(NOT COMPILE_THREAD)
-	set(COMPILE_THREAD 16 CACHE STRING
-		"Number of threads for compilation."
-		FORCE)
+	include(ProcessorCount)
+	ProcessorCount(COMPILE_THREAD)
+message("Thread Count: ${COMPILE_THREAD}")
 endif(NOT COMPILE_THREAD)
+
+if(MSVC)
+  add_definitions(/MP)
+endif()
 
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 

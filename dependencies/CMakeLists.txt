@@ -5,7 +5,10 @@ project(MitsubaDependencies)
 set(CMAKE_CXX_STANDARD 17)
 
 # Following lines are configurations need to modify.
-set(COMPILE_THREAD 16)
+include(ProcessorCount)
+ProcessorCount(COMPILE_THREAD)
+message("Thread Count: ${COMPILE_THREAD}")
+
 set(ENV{http_proxy}  "http://127.0.0.1:10809") # for http
 set(ENV{https_proxy} "http://127.0.0.1:10809") # for https
 
