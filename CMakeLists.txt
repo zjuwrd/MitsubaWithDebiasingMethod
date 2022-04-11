@@ -45,6 +45,10 @@ find_package(Python COMPONENTS Interpreter Development REQUIRED)
 set(PYTHON_VERSION_WITHOUT_DOT "python${Python_VERSION_MAJOR}${Python_VERSION_MINOR}")
 message("Found python version: ${PYTHON_VERSION_WITHOUT_DOT}")
 
+find_package( PythonLibs REQUIRED )
+include_directories( ${PYTHON_INCLUDE_DIRS} )
+link_directories(${PYTHON_LIBRARIES})
+
 set(ZLIB_ROOT ${MITSUBA_DEPENDENCY_DIR})
 find_package(ZLIB REQUIRED)
 
