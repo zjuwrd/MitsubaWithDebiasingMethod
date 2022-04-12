@@ -57,3 +57,6 @@ mitsuba.*.log
 # We build cmake projects here
 cbuild/
 data/windows/wmain_stub.obj
+
+CMakeFiles/
+CMakeCache.txt
