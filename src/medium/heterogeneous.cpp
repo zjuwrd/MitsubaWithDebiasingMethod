@@ -180,6 +180,35 @@ public:
         EWoodcockTracking
     };
 
+    /// @brief Possible Debiasing methods
+    enum EDebiaseMethod
+    {
+        /*
+         * \brief No debiasing
+        */
+        ENoDebiased = 0,
+        /*
+         * \brief Debiasing using the telescope method
+        */
+        ETelescope,
+        /*
+         * \brief Debiasing using the Taylor series method
+        */
+        ETaylor
+    };
+
+    enum ETransmitteFunctionType
+    {
+        /*
+         * \brief traditional exponential function
+         */
+        EExponential = 0,
+        /*
+         * \brief Davis-Mineev function
+         */
+        EDavisMineev 
+    };
+
     HeterogeneousMedium(const Properties &props)
         : Medium(props) {
         m_stepSize = props.getFloat("stepSize", 0);
@@ -199,6 +228,44 @@ public:
             m_method = ESimpsonQuadrature;
         else
             Log(EError, "Unsupported integration method \"%s\"!", method.c_str());
+
+        //parse type for debiase method
+        std::string debiase_method = boost::to_lower_copy(props.getString("debiaseMethod", "nodebiase"));
+        if(debiase_method == "nodebiase")
+        {
+            m_debiaseMethod = ENoDebiased;
+        }
+        else if(debiase_method == "telescope")
+        {
+            m_debiaseMethod = ETelescope;
+        }
+        else if(debiase_method == "taylor")
+        {
+            m_debiaseMethod = ETaylor;
+        }
+        else
+        {
+            Log(EError, "Unsupported debiase method \"%s\"!", debiase_method.c_str());
+        }
+
+        //parse type for transmitte function
+        std::string transmitte_function_type = boost::to_lower_copy(props.getString("transmitteFunctionType", "exponential"));
+        if(transmitte_function_type == "exponential")
+        {
+            m_transmittanceFunctionType = EExponential;
+        }
+        else if(transmitte_function_type == "davis-mineev")
+        {
+            m_transmittanceFunctionType = EDavisMineev;
+        }
+        else
+        {
+            Log(EError, "Unsupported transmitte function type \"%s\"!", transmitte_function_type.c_str());
+        }
+        //get parameters for davis-mineev funtion if neccessary
+        C = props.getFloat("C",1.f);
+        beta = props.getFloat("beta",1.f);
+
     }
 
     /* Unserialize from a binary data stream */
@@ -375,6 +442,550 @@ public:
             * stepSize * (1.0f / 3.0f);
     }
 
+    /*
+     * ######################
+     * Imlemented by zjuwrd.
+     * ######################
+     * This function uses unbiased methods (Telescope or Taylor series) to caculate
+     * the transmittance term g(F) = e^(-F) or some other generalized form of g.
+     * And F = \int_{ray.mint}^{ray.maxt} density(ray(x)) dx.
+     * 
+     * \param ray
+     *      Ray segment to be used for the integration
+     * \return 
+     *      The transmittance term.
+     */
+    Float DebaisedTransmittance(const Ray &ray, Sampler* sampler) const 
+    {
+        Float mint,maxt;
+        if (!m_densityAABB.rayIntersect(ray, mint, maxt))
+            return 0.0f;
+        
+        mint = std::max(mint, ray.mint);
+        maxt = std::min(maxt, ray.maxt);
+        Float length = maxt - mint, maxComp=0;
+        
+        Point p = ray(mint), pLast = ray(maxt);
+        /* Ignore degenerate path segments */
+        for (int i=0; i<3; ++i)
+            maxComp = std::max(std::max(maxComp,
+                std::abs(p[i])), std::abs(pLast[i]));
+        if (length < 1e-6f * maxComp)
+            return 0.0f;
+
+        //debias using Telescope method.
+        if(m_debiaseMethod == EDebiaseMethod::ETelescope)
+        {
+            //Parameters r for Geometric distribution: J0 ~ r*(1-r)^J0
+            constexpr Float r = 0.65f;
+            //Parameters for the number of steps: 2^J1 * MinStepCount
+            uint32_t MinStepCount = (uint32_t) std::ceil(length / m_stepSize);
+            //Make sure MinStepCount is even
+            MinStepCount += MinStepCount % 2;
+            //Sample uniformly in [0,1]
+            const Float psi = sampler->next1D();
+            //Compute J0 and J1
+            int J0 = math::fastlog(1.f-psi) / math::fastlog(1.f-r) - 1;
+            //clamp J0 to [0,10] to avoid too many steps
+            J0 = math::clamp(J0,0,10);
+            //J1 = J0 + 1    
+            int J1 = J0+1;
+            //Compute the probability mass function of J0
+            Float pmf = r*std::pow(r,J0);
+            //total steps = MinStepCount * 2^J1
+            uint32_t nSteps = MinStepCount << J1;
+            //calculate stepsize
+            const Float stepSize = length / nSteps;
+            const Vector increment = ray.d * stepSize;
+
+            #if defined(HETVOL_STATISTICS)
+                avgRayMarchingStepsTransmittance.incrementBase();
+                earlyExits.incrementBase();
+            #endif
+
+            /* Perform lookups at the first and last node */
+            const Float init_integratedDensity = lookupDensity(p, ray.d)
+                + lookupDensity(pLast, ray.d);
+            
+            //caculate the density for J0,J1, and k respectively.
+            Float integratedDensity0 = init_integratedDensity;
+            Float integratedDensity1 = init_integratedDensity;
+            Float integratedDensityk = init_integratedDensity;
+            
+            
+            #if defined(HETVOL_EARLY_EXIT)
+                const Float stopAfterDensity = -math::fastlog(Epsilon);
+                const Float stopValue = stopAfterDensity*3.0f/(stepSize
+                        * m_scale);
+            #endif
+
+            p += increment;
+
+            Float mk = 4;
+            Float m0 = 4;
+            Float m1 = 4;
+            for (uint32_t i=1; i<nSteps; ++i) {
+                
+                Float density = lookupDensity(p, ray.d);
+                integratedDensity1 += m1 * density;            
+                m1 = 6 - m1;
+
+                if(i%2 == 0)
+                {
+                    integratedDensity0 += m0 * density;            
+                    m0 = 6 - m0;
+                }
+
+                if(i%(1<<J1) == 0)
+                {
+                    integratedDensityk += mk * density;
+                    mk = 6 - mk;
+                }
+
+                #if defined(HETVOL_STATISTICS)
+                    ++avgRayMarchingStepsTransmittance;
+                #endif
+
+                #if defined(HETVOL_EARLY_EXIT)
+                    if (integratedDensityk > stopValue) {
+                        // Reached the threshold -- stop early
+                        #if defined(HETVOL_STATISTICS)
+                            ++earlyExits;
+                        #endif
+                        return std::numeric_limits<Float>::infinity();
+                    }
+                #endif
+
+                Point next = p + increment;
+                if (p == next) {
+                    Log(EWarn, "integrateDensity(): unable to make forward progress -- "
+                            "round-off error issues? The step size was %e, mint=%f, "
+                            "maxt=%f, nSteps=%i, ray=%s", stepSize, mint, maxt, nSteps,
+                            ray.toString().c_str());
+                    break;
+                }
+                p = next;
+            }
+
+            Float OptThickk = integratedDensityk * m_scale * stepSize * (1<<J1) * (1.f/3.f);
+            Float OptThick0 = integratedDensity0 * m_scale * stepSize * 2 * (1.f/3.f);
+            Float OptThick1 = integratedDensity1 * m_scale * stepSize * (1.f/3.f);
+            Float ret = TransmitteFunction(OptThickk) + 
+                            (TransmitteFunction(OptThick1) - 
+                                TransmitteFunction(OptThick0)) / pmf;
+
+            return math::clamp(ret,Float(0),std::numeric_limits<Float>::infinity());
+        }
+        //Debias using Taylor series method. Only for exponential and pink-noise cases.
+        else if(m_debiaseMethod == EDebiaseMethod::ETaylor)
+        {
+            //caculate the integration for optical thickness in an unbiased (but noisy) manner
+            auto MC_Integration = [&](uint32_t MinPointsCount ){
+            
+                Float density = 0.f;
+                //set stepSize <=0.2f
+                Float stepSize = 0.2f;
+                uint32_t PointsCount = length / stepSize;
+                if(PointsCount < MinPointsCount)
+                {
+                    PointsCount = MinPointsCount;
+                    stepSize = length / PointsCount;
+                }
+
+                //jittering
+                const Float psi = sampler->next1D();
+                for(uint32_t i=0;i<PointsCount;++i)
+                {
+                    const Float dist = (i + psi) *stepSize;
+                    Point sample = ray(dist);
+                    density += lookupDensity(sample,ray.d);
+                }
+
+                return density * m_scale * stepSize;
+            };
+
+            //P( J >=j | J >= j-1)
+            auto P_acc = [&](uint32_t j){
+                if(j == 0) return 1.f;
+                return (1.f+ (j-1.f)*C*C) / Float(j);
+            };
+
+            auto PMF = [&](uint32_t j){
+                Float pmf = (1.f - P_acc(j));
+                for(int i=0;i<j;++i)
+                {
+                    pmf *= P_acc(i); 
+                }
+                return pmf;
+            };
+
+            {
+                constexpr uint32_t MaxJ = 10000;
+                constexpr uint32_t K = 6;
+                constexpr uint32_t PtsForMC = 20;
+                //possiblilty for Debiased term to continue expanding
+                constexpr Float rr = 0.65f;
+
+                //possibility of caculating the Debiased term
+                constexpr Float Debiased_possiblilty=0.1f;
+
+                const Float psi = sampler->next1D();
+                Float tr = 0.f, DebiaseTerm = 0.f;
+            #if 1
+                if(m_transmittanceFunctionType == ETransmitteFunctionType::EExponential)
+                {
+                    //choose start point as alpha = 0
+                    Float term = 1.f;
+                    Float IntRes = -MC_Integration(PtsForMC);
+                    for(int i=0;i<K;++i)
+                    {
+                        IntRes = -MC_Integration(PtsForMC);
+                        if(i>0) term = term * IntRes / i;
+                        tr += term;
+                    }
+
+                    // caculate the debisased term with propability=Debiased_possiblilty
+                    if(sampler->next1D() < Debiased_possiblilty)
+                    {
+                        Float p = 1.f;
+                        for(int J=K;J<MaxJ;++J)
+                        {
+                            p *= rr;
+                            if(1.f - p > psi)break;
+                            IntRes = -MC_Integration(PtsForMC);
+                            term = term*(IntRes)/ J;
+                            DebiaseTerm += term/p;
+                        }
+
+                    }
+
+                }
+                else if(m_transmittanceFunctionType == ETransmitteFunctionType::EDavisMineev)
+                {
+                    // choose start point as alpha = 0
+                    Float term = 1.f;
+
+                    for(int i=0;i<K;++i)
+                    {
+                        if(i>0)
+                        {
+                            Float F = -MC_Integration(PtsForMC);
+                            term *=  F/(i);
+                        }
+                        if(i>1)
+                            term *= (1.f+(i)*C*C);
+                        tr += term;
+                    }
+
+                    if(sampler->next1D() < Debiased_possiblilty)
+                    {
+                        Float p = 1.f;
+                        for(int J=K;J<MaxJ;++J)
+                        {
+                            Float tmp = P_acc(J);
+                            p *= tmp;
+                            if(1.f - p > psi)break;
+                            if(J>0)
+                            {
+                                Float F = -MC_Integration(PtsForMC);
+                                term *=  F/(J);
+                            }
+                            if(J>1)
+                                term *= (1.f+(J)*C*C);
+                            DebiaseTerm += term/p;
+                        }
+                    }
+                }
+            #endif
+
+                //for dbg
+                // Float intres = -MC_Integration(PtsForMC);
+                // Float term = 1.f;
+                // Float dbg = 0.f;
+                // for(int n=0;n<6;++n)
+                // {
+                //     Float intres = -MC_Integration(PtsForMC);
+                //     if(n>0)
+                //         term *= intres / n;
+                //     dbg += term;
+                // }
+                // return math::clamp(dbg,Float(0),std::numeric_limits<Float>::infinity());
+
+
+                Float res = tr + DebiaseTerm / Debiased_possiblilty;
+                return math::clamp( res , Float(0), Float(1) );
+            }
+        }
+    }
+
+    /*
+     * ######################
+     * Implemented by zjuwrd.
+     * ######################
+     * This function uses unbiased method (Telescope) to solve the 
+     * following integrail equation for \a t:
+     * 
+     *      \int_{ray.mint}^t density(ray(x)) dx == desiredDensity
+     * 
+     * The integration proceeds in the form of
+     *      <I_N> = <I(k)> + (<I(J+1)> - <I(J)>) / pmf(J)
+     * Where the stepsize of I(i) is  propotional to 2^{-i} and 
+     * J ~ Geom(r=0.65). The intergation method used for <I(k)>, <I(J)>, <I(J+1)> 
+     * is the same as normal InvertDensityIntegral.
+     * 
+     * \param ray
+     *    Ray segment to be used for the integration
+     *
+     * \param desiredDensity
+     *    Right hand side of the above equation
+     *
+     * \param integratedDensity
+     *    Contains the final integrated density. Upon success, this value
+     *    should closely match \c desiredDensity. When the equation could
+     *    \a not be solved, the parameter contains the integrated density
+     *    from \c ray.mint to \c ray.maxt (which, in this case, must be
+     *    less than \c desiredDensity).
+     *
+     * \param t
+     *    After calling this function, \c t will store the solution of the above
+     *    equation. When there is no solution, it will be set to zero.
+     *
+     * \param densityAtMinT
+     *    After calling this function, \c densityAtMinT will store the
+     *    underlying density function evaluated at \c ray(ray.mint).
+     *
+     * \param densityAtT
+     *    After calling this function, \c densityAtT will store the
+     *    underlying density function evaluated at \c ray(t). When
+     *    there is no solution, it will be set to zero.
+     *
+     * \return
+     *    When no solution can be found in [ray.mint, ray.maxt] the
+     *    function returns \c false.
+     
+     */
+
+    bool DebiasedInvertDensityIntegral(const float psi, const Ray &ray, Float desiredDensity,
+            Float &integratedDensity, Float &t, Float &densityAtMinT,
+            Float &densityAtT) const {
+        integratedDensity = densityAtMinT = densityAtT = 0.0f;
+
+        /* Determine the ray segment, along which the
+           density integration should take place */
+        Float mint, maxt;
+        if (!m_densityAABB.rayIntersect(ray, mint, maxt))
+            return false;
+        mint = std::max(mint, ray.mint);
+        maxt = std::min(maxt, ray.maxt);
+        Float length = maxt - mint, maxComp = 0;
+        Point p = ray(mint), pLast = ray(maxt);
+
+        /* Ignore degenerate path segments */
+        for (int i=0; i<3; ++i)
+            maxComp = std::max(std::max(maxComp,
+                std::abs(p[i])), std::abs(pLast[i]));
+        if (length < 1e-6f * maxComp)
+            return 0.0f;
+
+        //Parameters r for Geometric distribution: J0 ~ r*(1-r)^J0
+        constexpr Float r = 0.65f;
+        //Compute J0 and J1
+        int J0 = math::fastlog(1.f-psi) / math::fastlog(1.f-r) - 1;
+        //clamp J0 to [0,10] to avoid too many steps
+        J0 = math::clamp(J0,0,10);
+        //J1 = J0 + 1    
+        int J1 = J0+1;
+        //Compute the probability mass function of J0
+        Float pmf = r*std::pow(r,J0);
+
+        /* Compute a suitable step size (this routine samples the integrand
+           between steps, hence the factor of 2) */
+        uint32_t nSteps = (uint32_t) std::ceil(length / (2*m_stepSize));
+        nSteps <<= J1;
+        Float stepSize = length / nSteps,
+              multiplier = (1.0f / 6.0f) * stepSize
+                  * m_scale;
+        Vector fullStep = ray.d * stepSize,
+               halfStep = fullStep * .5f;
+
+        const Float node1 = lookupDensity(p, ray.d);
+
+        Float node11 = node1, nodek1 = node1, node01 = node1;
+        Float integratedDensity1 = integratedDensity, 
+                integratedDensity0 = integratedDensity,
+                integratedDensityk = integratedDensity;
+
+        Float densityAtT1=densityAtT,densityAtT0 = densityAtT,densityAtTk = densityAtT;
+        Float t1=t,t0=t,tk=t;
+
+
+        if (ray.mint == mint)
+            densityAtMinT = node1 * m_scale;
+        else
+            densityAtMinT = 0.0f;
+
+        #if defined(HETVOL_STATISTICS)
+            avgRayMarchingStepsSampling.incrementBase();
+        #endif
+
+        const Float Local_m_scale = m_scale;
+        auto FindScatter = [Local_m_scale, desiredDensity](const Float Local_stepSize, const Float node1, const Float node2, const Float node3, const Float LowerBound
+                                ,Float& Local_integratedDensity, Float& Local_densityAtT, Float& Local_t)
+        {
+            Float a = 0, b = Local_stepSize, x = a,
+                    fx = Local_integratedDensity - desiredDensity,
+                    stepSizeSqr = Local_stepSize * Local_stepSize,
+                    temp = Local_m_scale / stepSizeSqr;
+            int it = 1;
+
+            #if defined(HETVOL_STATISTICS)
+                avgNewtonIterations.incrementBase();
+            #endif
+            while (true) {
+                #if defined(HETVOL_STATISTICS)
+                    ++avgNewtonIterations;
+                #endif
+                /* Lagrange polynomial from the Simpson quadrature */
+                Float dfx = temp * (node1 * stepSizeSqr
+                    - (3*node1 - 4*node2 + node3)*Local_stepSize*x
+                    + 2*(node1 - 2*node2 + node3)*x*x);
+                #if 0
+                    cout << "Iteration " << it << ":  a=" << a << ", b=" << b
+                        << ", x=" << x << ", fx=" << fx << ", dfx=" << dfx << endl;
+                #endif
+
+                x -= fx/dfx;
+
+                if (EXPECT_NOT_TAKEN(x <= a || x >= b || dfx == 0))
+                    x = 0.5f * (b + a);
+
+                /* Integrated version of the above Lagrange polynomial */
+                Float intval = Local_integratedDensity + temp * (1.0f / 6.0f) * (x *
+                    (6*node1*stepSizeSqr - 3*(3*node1 - 4*node2 + node3)*Local_stepSize*x
+                    + 4*(node1 - 2*node2 + node3)*x*x));
+                fx = intval-desiredDensity;
+
+                if (std::abs(fx) < 1e-6f) {
+                    Local_t = LowerBound + x;//mint + stepSize * i + x;
+                    Local_integratedDensity = intval;
+                    Local_densityAtT = temp * (node1 * stepSizeSqr
+                        - (3*node1 - 4*node2 + node3)*Local_stepSize*x
+                        + 2*(node1 - 2*node2 + node3)*x*x);
+                    return true;
+                } else if (++it > 30) {
+                    Log(EWarn, "invertDensityIntegral(): stuck in Newton-Bisection -- "
+                        "round-off error issues? The step size was %e, fx=%f, dfx=%f, "
+                        "a=%f, b=%f", Local_stepSize, fx, dfx, a, b);
+                    return false;
+                }
+
+                if (fx > 0)
+                    b = x;
+                else
+                    a = x;
+            }
+        };
+
+        Float node12,node13;
+        Float node02,node03;
+        Float nodek2,nodek3;
+
+        bool res0=false,res1=false,resk=false;
+        bool done0=false, done1=false,donek=false;
+
+        for (uint32_t i=0; i<nSteps; ++i) {
+            node12 = lookupDensity(p + halfStep, ray.d);
+            node13 = lookupDensity(p + fullStep, ray.d);
+            
+            if(i%2 == 0)node02 = node13;
+            if(i%2 == 1)node03 = node13;
+
+            if( i%(1<<J1) ==  (1<< (J1-1)) - 1 )nodek2 = node13;
+            if( i%(1<<J1) == (1<<J1) -1 ) nodek3 = node13;
+
+
+            #if defined(HETVOL_STATISTICS)
+                ++avgRayMarchingStepsSampling;
+            #endif
+
+            if(!done1)
+            {    
+                Float newDensity1 = integratedDensity1 + multiplier *
+                            (node11+node12*4+node13);
+                if (newDensity1 >= desiredDensity ) 
+                {
+                    done1 = true;
+                    res1 = FindScatter(stepSize,node11,node12,node13,
+                                    mint + stepSize *i,integratedDensity1,densityAtT1,t1);    
+                }
+                else{
+                    integratedDensity1 = newDensity1;
+                }
+            }
+
+            if(i%2 == 1)
+            {
+                Float newDensity0 = integratedDensity0 + multiplier *(node01 + node02*4 + node03);
+                if(!done0)
+                {
+                    if(newDensity0 >= desiredDensity)
+                    {
+                        done0 = true;
+                        res0 = FindScatter(stepSize*2,node01,node02,node03,
+                                    mint + 2*stepSize*i, integratedDensity0, densityAtT0,t0);
+                    }
+                    else
+                        integratedDensity0 = newDensity0;
+                }
+                
+            }
+
+            if(i%(1<<J1) == (1<<J1)-1)
+            {
+                Float newDensityk = integratedDensityk + multiplier *(nodek1 + nodek2*4 + nodek3);
+                if(!donek)
+                {
+                    if(newDensityk >= desiredDensity)
+                    {
+                        donek = true;
+                        resk = FindScatter(stepSize*(1<<J1),nodek1,nodek2,nodek3,
+                                    mint + (1<<J1)*stepSize*i, integratedDensityk, densityAtTk,tk);
+                    }
+                    else
+                    {
+                        integratedDensityk = newDensityk;
+                    }
+                }
+            }
+
+            
+
+            if(res0 && res1 && resk)break;
+
+            Point next = p + fullStep;
+            if (p == next) {
+                Log(EWarn, "invertDensityIntegral(): unable to make forward progress -- "
+                        "round-off error issues? The step size was %e", stepSize);
+                break;
+            }
+            
+            node11 = node13;
+            p = next;
+        }
+
+        if(res0 && res1 && resk)
+        {
+            integratedDensity = integratedDensityk + (integratedDensity1 - integratedDensity0) / pmf;
+            t = tk + (t1-t0) / pmf;
+            densityAtT = densityAtTk + (densityAtT1-densityAtT0) / pmf;
+            return true;
+        }
+
+        return false;
+    }
+
+
+
     /**
      * This function uses composite Simpson quadrature to solve the
      * following integral equation for \a t:
@@ -544,8 +1155,16 @@ public:
     }
 
     Spectrum evalTransmittance(const Ray &ray, Sampler *sampler) const {
+        
+        //use unbias method
+        if(m_debiaseMethod != EDebiaseMethod::ENoDebiased)
+        {
+            return Spectrum(DebaisedTransmittance(ray, sampler));
+        }
+
         if (m_method == ESimpsonQuadrature || sampler == NULL) {
-            return Spectrum(math::fastexp(-integrateDensity(ray)));
+            // return Spectrum(math::fastexp(-integrateDensity(ray)));
+            return Spectrum(TransmitteFunction(integrateDensity(ray)));
         } else {
             /* When Woodcock tracking is selected as the sampling method,
                we can use this method to get a noisy (but unbiased) estimate
@@ -604,7 +1223,8 @@ public:
                     ? m_orientation->lookupVector(mRec.p) : Vector(0.0f);
             }
 
-            Float expVal = math::fastexp(-integratedDensity);
+            // Float expVal = math::fastexp(-integratedDensity);
+            Float expVal = TransmitteFunction(integratedDensity);
             mRec.pdfFailure = expVal;
             mRec.pdfSuccess = expVal * densityAtT;
             mRec.pdfSuccessRev = expVal * densityAtMinT;
@@ -664,7 +1284,8 @@ public:
 
     void eval(const Ray &ray, MediumSamplingRecord &mRec) const {
         if (m_method == ESimpsonQuadrature) {
-            Float expVal = math::fastexp(-integrateDensity(ray));
+            // Float expVal = math::fastexp(-integrateDensity(ray));
+            Float expVal = TransmitteFunction(integrateDensity(ray));
             Float mintDensity = lookupDensity(ray(ray.mint), ray.d) * m_scale;
             Float maxtDensity = 0.0f;
             Spectrum maxtAlbedo(0.0f);
@@ -715,7 +1336,32 @@ protected:
         }
         return density;
     }
+
+    /// transmitte function 
+    inline Float TransmitteFunction(const Float OpticalThickness) const {
+        if(m_transmittanceFunctionType == EExponential)
+        {
+            return math::fastexp(-OpticalThickness);
+        }
+        else if(m_transmittanceFunctionType == EDavisMineev) {
+            
+            Float base = 1.f + std::pow(OpticalThickness*C,beta)*C;
+            Float exp = -std::pow(OpticalThickness,1.f-beta) / std::pow(C,1.f+beta);
+            return std::pow(base,exp);
+        }
+        else{
+            Log(EError, "Unsupported debiase method!");
+        }
+
+        return 0.f;
+    }
+
+
 protected:
+    
+    ETransmitteFunctionType m_transmittanceFunctionType= ETransmitteFunctionType::EExponential;
+    Float C=1.f,beta=1.f;
+    EDebiaseMethod m_debiaseMethod = EDebiaseMethod::ENoDebiased;
     EIntegrationMethod m_method;
     ref<VolumeDataSource> m_density;
     ref<VolumeDataSource> m_albedo;
