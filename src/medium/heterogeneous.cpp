@@ -552,7 +552,7 @@ public:
                         #if defined(HETVOL_STATISTICS)
                             ++earlyExits;
                         #endif
-                        return std::numeric_limits<Float>::infinity();
+                        return 0.f;
                     }
                 #endif
 
@@ -573,7 +573,7 @@ public:
             Float ret = TransmitteFunction(OptThickk) + 
                             (TransmitteFunction(OptThick1) - 
                                 TransmitteFunction(OptThick0)) / pmf;
-
+            
             return math::clamp(ret,Float(0),std::numeric_limits<Float>::infinity());
         }
         //Debias using Taylor series method. Only for exponential and pink-noise cases.
@@ -1052,7 +1052,13 @@ public:
 
         /* Compute a suitable step size (this routine samples the integrand
            between steps, hence the factor of 2) */
+            
         uint32_t nSteps = (uint32_t) std::ceil(length / (2*m_stepSize));
+        if(m_debiaseMethod != EDebiaseMethod::ENoDebiased)
+        {
+            nSteps = std::ceil(length / std::min(m_density->getStepSize(), m_albedo->getStepSize()));
+        }
+
         Float stepSize = length / nSteps,
               multiplier = (1.0f / 6.0f) * stepSize
                   * m_scale;

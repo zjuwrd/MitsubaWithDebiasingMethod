@@ -1,6 +1,20 @@
 # Mitsuba with debiasing methods
 
-This project is aimed for implementing debiasing methods for volumetric rendering, based on the `cmake-version` fork of `mitsuba-v0.6`. To build the project please look into `BUILD.md` for further guide.
+This project is aimed for implementing debiasing methods for volumetric rendering, based on the `cmake-version` fork of `mitsuba-v0.6`.
+
+## 1. building
+
+**Do not modify the directory `build` !!**  , where many specific config files locate. Instead, create another directory like `cbuild` to place building results. 
+
+To build the project please look into 
+
+[**`BUILD.md`**]: ./BUILD.md
+
+ for further guide.
+
+Mitsuba0.6 is integrated with **GUI**, so after you successfully build the project you can use the **GUI** to test with some specific scenes. 
+
+## 2. testing
 
 I have modified `./src/medium/heterogeneous.cpp` ,adding into debiasing methods for the evaluation of transmittance. 
 
