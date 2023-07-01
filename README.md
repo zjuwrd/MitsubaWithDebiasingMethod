@@ -6,13 +6,13 @@ This project is aimed for implementing debiasing methods for volumetric renderin
 
 **Do not modify the directory `build` !!**  , where many specific config files locate. Instead, create another directory like `cbuild` to place building results. 
 
+For the project is rather large, we have pre-built binary files for windows:
+https://pan.zju.edu.cn/share/013438f0a4b5059638d123be38. 
+
 To build the project please look into 
+[**`BUILD.md`**]: ./BUILD.md  for further guide.
 
-[**`BUILD.md`**]: ./BUILD.md
-
- for further guide.
-
-Mitsuba0.6 is integrated with **GUI**, so after you successfully build the project you can use the **GUI** to test with some specific scenes. 
+`Mitsuba0.6` is integrated with **GUI**, so after you successfully build the project you can use the **GUI** to test with some specific scenes. 
 
 ## 2. testing
 
